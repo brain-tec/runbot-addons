@@ -26,10 +26,12 @@ import sys
 import shutil
 
 import openerp
+from openerp import api
 from openerp.osv import orm, fields
 from openerp.addons.runbot.runbot import mkdirs
 
 _logger = logging.getLogger(__name__)
+MAGIC_PID_RUN_NEXT_JOB = -2
 
 
 def custom_build(func):
@@ -60,13 +62,35 @@ class runbot_build(orm.Model):
         'prebuilt': fields.boolean("Prebuilt"),
     }
 
-    def job_00_prebuild(self, cr, uid, build, lock_path, log_path):
-        build._log('test_base', 'Start pre-build commands')
-        # checkout source
-        build.checkout()
+    def job_00_init(self, cr, uid, build, lock_path, log_path):
+        res = super(runbot_build, self).job_00_init(
+            cr, uid, build, lock_path, log_path
+        )
         if build.branch_id.repo_id.is_custom_build:
             build.pre_build(lock_path, log_path)
         build.prebuilt = True
+        return res
+
+    def job_10_test_base(self, cr, uid, build, lock_path, log_path):
+        if build.branch_id.repo_id.skip_test_jobs:
+            _logger.info('skipping job_10_test_base')
+            return MAGIC_PID_RUN_NEXT_JOB
+        else:
+            return super(runbot_build, self).job_10_test_base(
+                cr, uid, build, lock_path, log_path
+            )
+
+    def job_20_test_all(self, cr, uid, build, lock_path, log_path):
+        if build.branch_id.repo_id.skip_test_jobs:
+            _logger.info('skipping job_20_test_all')
+            with open(log_path, 'w') as f:
+                f.write('consider tests as passed: '
+                        '.modules.loading: Modules loaded.')
+            return MAGIC_PID_RUN_NEXT_JOB
+        else:
+            return super(runbot_build, self).job_20_test_all(
+                cr, uid, build, lock_path, log_path
+            )
 
     def sub_cmd(self, build, cmd):
         if not cmd:
@@ -76,6 +100,8 @@ class runbot_build(orm.Model):
         internal_vals = {
             'custom_build_dir': build.repo_id.custom_build_dir or '',
             'custom_server_path': build.repo_id.custom_server_path,
+            'other_repo_path': build.repo_id.other_repo_id.path or '',
+            'build_dest': build.dest,
         }
         return [i % internal_vals for i in cmd]
 
@@ -144,3 +170,13 @@ class runbot_build(orm.Model):
             "--workers=0",
         ] + params
         return cmd, mods
+
+    @api.cr_uid_ids_context
+    def server(self, cr, uid, ids, *l, **kw):
+        for build in self.browse(cr, uid, ids, context=None):
+            if build.repo_id.is_custom_build:
+                custom_odoo_path = build.repo_id.custom_odoo_path
+                if custom_odoo_path and\
+                        os.path.exists(build.path(custom_odoo_path)):
+                    return build.path(custom_odoo_path, *l)
+        return super(runbot_build, self).server(cr, uid, ids, *l, **kw)
