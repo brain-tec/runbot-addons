@@ -56,8 +56,8 @@ class RunbotRepo(models.Model):
         repos_gitlab = self.filtered('uses_gitlab')
         for repo_gitlab in repos_gitlab:
             cmd_gitlab = cmd.copy()
-            if cmd_gitlab == ['fetch', '-p', 'origin',
-                              '+refs/pull/*/head:refs/pull/*']:
+            if ('fetch' in cmd_gitlab
+                    and cmd_gitlab[-1] == '+refs/pull/*/head:refs/pull/*'):
                 cmd_gitlab.pop()
                 cmd_gitlab.append('+refs/merge-requests/*/head:refs/pull/*')
             return super(RunbotRepo, repos_gitlab)._git(cmd_gitlab)
@@ -74,7 +74,7 @@ class RunbotRepo(models.Model):
             input: URL_GITLAB/User.keys... instead of
                    URL_GITHUB/users/User/keys...
             output: res['author'] = {'login': data['username']}
-                    res['commiter'] = {'login': data['username']}
+                    res['committer'] = {'login': data['username']}
         - Report statutes
             input: URL_GITLABL/... instead of URL_GITHUB/statuses/...
             output: N/A
@@ -93,7 +93,7 @@ class RunbotRepo(models.Model):
                     response = session.get(url)
                 response.raise_for_status()
                 json = (response.json() if not is_url_keys
-                        else response._content)
+                        else response.text)
                 if 'merge_requests?iid=' in url:
                     json = json[0]
                     json['head'] = {'ref': json['target_branch']}
@@ -109,8 +109,7 @@ class RunbotRepo(models.Model):
                             response.raise_for_status()
                             data = response.json()
                             json[own_key] = {
-                                'login':
-                                len(data) and data[0]['username'] or {}
+                                'login': data and data[0]['username'] or ''
                             }
                 if is_url_keys:
                     json = [{'key': ssh_rsa} for ssh_rsa in json.split('\n')]
